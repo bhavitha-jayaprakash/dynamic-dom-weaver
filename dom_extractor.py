@@ -3,6 +3,8 @@
 ║  COMPONENT 1 — The Ingestion & DOM Extractor                    ║
 ║  Fetches raw HTML, extracts clean text via Jina Reader, and     ║
 ║  isolates the first H1, its adjacent P, and the first CTA (A). ║
+║  Stamps found tags with `data-troopod-target` attributes for    ║
+║  exact downstream targeting by Component 6.                     ║
 ╚══════════════════════════════════════════════════════════════════╝
 """
 
@@ -29,6 +31,11 @@ USER_AGENT = (
     "AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/120.0.0.0 Safari/537.36"
 )
+
+# Data-attribute selectors used throughout the pipeline
+SELECTOR_HEADLINE    = '[data-troopod-target="headline"]'
+SELECTOR_SUBHEADLINE = '[data-troopod-target="subheadline"]'
+SELECTOR_CTA         = '[data-troopod-target="cta"]'
 
 
 def _build_headers() -> Dict[str, str]:
@@ -147,8 +154,9 @@ def _extract_key_elements(soup: BeautifulSoup, jina_text: str = "") -> Dict[str,
                     "Pre-order") inside <button>/<a> outside ignorable zones
                     → short <a> outside ignorable zones → any <button>
 
-    For each, we store the original text and its character length so
-    Component 3 can enforce character-count constraints on the LLM.
+    For each, we store the original text, its character length, and the
+    exact CSS selector (using data-troopod-target attributes) so
+    Component 6 can target the precise node.
 
     If a node cannot be found at all, a clear sentinel string is stored
     (e.g., "No Headline Found") so the AI knows to skip that mutation.
@@ -169,44 +177,44 @@ def _extract_key_elements(soup: BeautifulSoup, jina_text: str = "") -> Dict[str,
     cta_text_pattern = re.compile(r"add to cart|buy now|pre-order", re.IGNORECASE)
 
     # ── 1. Headline — priority zones then aggressive fallback ─
-    headline_tag = None
+    robust_h1_tag = None
 
     # Priority A: <h1> inside a <main> tag
     main_tag = soup.find("main")
     if main_tag is not None:
-        headline_tag = main_tag.find("h1")
+        robust_h1_tag = main_tag.find("h1")
 
     # Priority B: <h1> inside a product-details/product-info container
-    if headline_tag is None:
+    if robust_h1_tag is None:
         product_container = soup.find(class_=product_zone_pattern)
         if product_container is not None:
-            headline_tag = product_container.find("h1")
+            robust_h1_tag = product_container.find("h1")
 
     # Priority C: any <h1> on the whole page
-    if headline_tag is None:
-        headline_tag = soup.find("h1")
+    if robust_h1_tag is None:
+        robust_h1_tag = soup.find("h1")
 
-    if headline_tag is None:
+    if robust_h1_tag is None:
         # Fallback D: <h2> with a class hinting at hero/title/header
-        headline_tag = soup.find("h2", class_=hero_pattern)
+        robust_h1_tag = soup.find("h2", class_=hero_pattern)
 
-    if headline_tag is None:
+    if robust_h1_tag is None:
         # Fallback E: any <h2>
-        headline_tag = soup.find("h2")
+        robust_h1_tag = soup.find("h2")
 
-    if headline_tag is None:
+    if robust_h1_tag is None:
         # Fallback F: any <h3>
-        headline_tag = soup.find("h3")
+        robust_h1_tag = soup.find("h3")
 
-    if headline_tag is None:
+    if robust_h1_tag is None:
         # Fallback G: <div> or <span> with a class containing
         # title/hero/header/heading (common in React/SPA sites)
         for tag_name in ("div", "span"):
-            headline_tag = soup.find(tag_name, class_=hero_pattern)
-            if headline_tag:
+            robust_h1_tag = soup.find(tag_name, class_=hero_pattern)
+            if robust_h1_tag:
                 break
 
-    h1_text = _find_first_visible_text(headline_tag)
+    h1_text = _find_first_visible_text(robust_h1_tag)
 
     if not h1_text:
         # Fallback H (last resort): use the first 60 characters of
@@ -218,29 +226,35 @@ def _extract_key_elements(soup: BeautifulSoup, jina_text: str = "") -> Dict[str,
             h1_text = NO_HEADLINE
 
     # ── 2. Adjacent P (sibling or first P after headline) ─────
+    p_tag = None
     p_text = ""
-    if headline_tag is not None:
+    if robust_h1_tag is not None:
         # Strategy A: next <p> sibling of the headline tag
-        next_p = headline_tag.find_next_sibling("p")
+        next_p = robust_h1_tag.find_next_sibling("p")
         if next_p:
+            p_tag = next_p
             p_text = _find_first_visible_text(next_p)
 
         # Strategy B: first <p> anywhere after the headline in
         # document order
         if not p_text:
-            next_p = headline_tag.find_next("p")
+            next_p = robust_h1_tag.find_next("p")
             if next_p:
+                p_tag = next_p
                 p_text = _find_first_visible_text(next_p)
 
     # Fallback: grab the first <p> on the page
     if not p_text:
         first_p = soup.find("p")
-        p_text = _find_first_visible_text(first_p)
+        if first_p:
+            p_tag = first_p
+            p_text = _find_first_visible_text(first_p)
 
     if not p_text:
         p_text = NO_SUBTEXT
 
     # ── 3. CTA — semantic e-commerce targeting ───────────────
+    robust_cta_tag = None
     cta_text = ""
 
     # Priority A: explicit e-commerce CTA text ("Add to Cart", etc.)
@@ -249,6 +263,7 @@ def _extract_key_elements(soup: BeautifulSoup, jina_text: str = "") -> Dict[str,
         candidate = _find_first_visible_text(tag)
         if candidate and cta_text_pattern.search(candidate):
             if not _is_inside_ignorable(tag):
+                robust_cta_tag = tag
                 cta_text = candidate
                 logger.info("CTA matched via e-commerce pattern: '%s'", cta_text)
                 break
@@ -260,6 +275,7 @@ def _extract_key_elements(soup: BeautifulSoup, jina_text: str = "") -> Dict[str,
                 continue
             candidate = _find_first_visible_text(a_tag)
             if candidate and 2 <= len(candidate) <= 60:
+                robust_cta_tag = a_tag
                 cta_text = candidate
                 break
 
@@ -270,6 +286,7 @@ def _extract_key_elements(soup: BeautifulSoup, jina_text: str = "") -> Dict[str,
                 continue
             candidate = _find_first_visible_text(btn_tag)
             if candidate and 2 <= len(candidate) <= 60:
+                robust_cta_tag = btn_tag
                 cta_text = candidate
                 break
 
@@ -278,24 +295,47 @@ def _extract_key_elements(soup: BeautifulSoup, jina_text: str = "") -> Dict[str,
         for a_tag in soup.find_all("a"):
             candidate = _find_first_visible_text(a_tag)
             if candidate and len(candidate) >= 2:
+                robust_cta_tag = a_tag
                 cta_text = candidate
                 break
 
     if not cta_text:
         cta_text = NO_CTA
 
+    # ──────────────────────────────────────────────────────
+    #  DATA ATTRIBUTE STAMPING
+    #  Inject data-troopod-target attributes into the actual
+    #  BeautifulSoup tags so the raw_html serialisation carries
+    #  them. Component 6 uses these exact selectors to mutate
+    #  the correct nodes — no more guessing with generic tags.
+    # ──────────────────────────────────────────────────────
+    if robust_h1_tag:
+        robust_h1_tag['data-troopod-target'] = 'headline'
+        logger.info("Stamped data-troopod-target='headline' on <%s>", robust_h1_tag.name)
+
+    if p_tag:
+        p_tag['data-troopod-target'] = 'subheadline'
+        logger.info("Stamped data-troopod-target='subheadline' on <%s>", p_tag.name)
+
+    if robust_cta_tag:
+        robust_cta_tag['data-troopod-target'] = 'cta'
+        logger.info("Stamped data-troopod-target='cta' on <%s>", robust_cta_tag.name)
+
     return {
         "h1": {
             "text": h1_text,
             "char_length": len(h1_text),
+            "selector": SELECTOR_HEADLINE,
         },
         "p": {
             "text": p_text,
             "char_length": len(p_text),
+            "selector": SELECTOR_SUBHEADLINE,
         },
         "a": {
             "text": cta_text,
             "char_length": len(cta_text),
+            "selector": SELECTOR_CTA,
         },
     }
 
@@ -311,12 +351,13 @@ def extract_dom_data(url: str) -> Dict[str, Any]:
     Takes a target URL and returns:
       {
         "url":           str  — normalised URL,
-        "raw_html":      str  — full HTML source,
+        "raw_html":      str  — full HTML source (with data-troopod-target
+                                attributes stamped on found nodes),
         "jina_text":     str  — clean text via Jina Reader,
         "elements": {
-            "h1": {"text": str, "char_length": int},
-            "p":  {"text": str, "char_length": int},
-            "a":  {"text": str, "char_length": int},
+            "h1": {"text": str, "char_length": int, "selector": str},
+            "p":  {"text": str, "char_length": int, "selector": str},
+            "a":  {"text": str, "char_length": int, "selector": str},
         }
       }
 
@@ -334,10 +375,14 @@ def extract_dom_data(url: str) -> Dict[str, Any]:
     jina_text = _fetch_jina_text(url)
 
     # 4 ▸ Parse & extract key elements (html.parser for max compatibility)
+    #     This also stamps data-troopod-target attributes into the soup.
     soup = BeautifulSoup(raw_html, "html.parser")
     elements = _extract_key_elements(soup, jina_text=jina_text)
 
-    # 5 ▸ Sanity check — warn if H1 is empty (may indicate SPA/JS-rendered page)
+    # 5 ▸ Re-serialise HTML WITH the data-troopod-target stamps
+    stamped_html = str(soup)
+
+    # 6 ▸ Sanity check — warn if H1 is empty (may indicate SPA/JS-rendered page)
     if not elements["h1"]["text"]:
         logger.warning(
             "No <h1> found on %s — page may be client-side rendered. "
@@ -347,7 +392,7 @@ def extract_dom_data(url: str) -> Dict[str, Any]:
 
     return {
         "url": url,
-        "raw_html": raw_html,
+        "raw_html": stamped_html,
         "jina_text": jina_text,
         "elements": elements,
     }

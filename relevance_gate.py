@@ -3,7 +3,8 @@
 ║  COMPONENT 2 — The Relevance Gatekeeper                        ║
 ║  Uses the NVIDIA NIM Vision model to verify brand alignment     ║
 ║  between an uploaded ad creative and the target page headline.  ║
-║  Extracts the core offer string for downstream mutation.        ║
+║  Extracts the core offer, tagline, promo code, and a TWO-color ║
+║  gradient palette for downstream hybrid mutation + injection.   ║
 ╚══════════════════════════════════════════════════════════════════╝
 """
 
@@ -37,16 +38,23 @@ Your ONLY task:
    a. The core promotional offer (e.g., "30% off", "$50 discount", "Free trial").
    b. The ad's tagline or slogan (the catchy phrase, e.g., "Scale Without Limits").
    c. Any promo/coupon code visible in the ad (e.g., "SAVE30", "WELCOME50").
+3. Identify the TWO most dominant/complementary brand colors from the Ad Image and return them as valid CSS hex codes.
+   - color_primary_hex: The single most prominent color (used in backgrounds, large areas, or primary buttons).
+   - color_secondary_hex: A complementary or accent color (used in smaller elements, highlights, or secondary buttons).
+   - Together these two colors will form a gradient. Pick colors that look good together.
+   - Do NOT pick black (#000000), white (#FFFFFF), or neutral greys unless they are truly the brand colors.
 
 RULES:
 - "Match" means both the Ad and the Headline belong to the same broad industry or a closely related one (e.g., "SaaS" and "Cloud Software" match; "Pizza delivery" and "Enterprise Security" do NOT match).
 - If no clear offer is visible in the ad, set core_offer to "General Promotion".
 - If no tagline is visible, set tagline to "".
 - If no promo code is visible, set promo_code to "".
+- Both color fields MUST be valid 7-character CSS hex codes starting with # (e.g., "#4A90D9").
+  If you truly cannot determine a second color, set color_secondary_hex to a slightly lighter/darker shade of the primary.
 - You MUST respond with ONLY valid JSON — no markdown fences, no commentary.
 
 OUTPUT FORMAT (strict JSON, nothing else):
-{"is_match": true, "core_offer": "30% off annual plans", "tagline": "Scale Without Limits", "promo_code": "SAVE30"}
+{"is_match": true, "core_offer": "30% off annual plans", "tagline": "Scale Without Limits", "promo_code": "SAVE30", "color_primary_hex": "#4A90D9", "color_secondary_hex": "#7B2FF7"}
 """
 
 
@@ -85,19 +93,38 @@ def _sanitise_json_response(raw: str) -> dict:
 
     Handles common model quirks:
       - "Answer: {...}"  or  "Output: {...}"  preambles
+      - "**JSON Response:**" or similar markdown headers
       - Markdown code fences (```json ... ```)
+      - HTML wrapping (<p>...</p>)
       - Trailing commas before closing braces
       - Leading/trailing whitespace
 
-    Strategy: locate the first '{' and last '}' and parse only
-    the text between them.
+    Strategy:
+      1. Strip markdown code fences and preamble prefixes.
+      2. Locate the first '{' and last '}' and parse only
+         the text between them.
 
     Returns the parsed dict.
     Raises ValueError if no JSON object can be found.
     """
     raw = raw.strip()
 
-    # Locate the JSON object boundaries
+    # ── Step 1: Strip markdown code fences ─────────────
+    raw = re.sub(r"```(?:json|JSON)?\s*", "", raw)
+    raw = re.sub(r"```", "", raw)
+
+    # ── Step 2: Strip common preamble prefixes ─────────
+    # Matches patterns like "Answer:", "Output:", "Response:",
+    # "**JSON Response:**", "Here is the JSON:", etc.
+    raw = re.sub(
+        r"^(?:\*{0,2}(?:Answer|Output|Response|Result|JSON\s*Response)\s*:?\*{0,2}\s*)+",
+        "",
+        raw,
+        flags=re.IGNORECASE | re.MULTILINE,
+    )
+    raw = raw.strip()
+
+    # ── Step 3: Locate the JSON object boundaries ──────
     start_idx = raw.find("{")
     end_idx = raw.rfind("}") + 1
 
@@ -106,11 +133,33 @@ def _sanitise_json_response(raw: str) -> dict:
 
     json_str = raw[start_idx:end_idx]
 
-    # Clean trailing commas (e.g. {"a": 1,} → {"a": 1})
+    # ── Step 4: Clean trailing commas ──────────────────
     json_str = re.sub(r",\s*}", "}", json_str)
     json_str = re.sub(r",\s*]", "]", json_str)
 
     return json.loads(json_str)
+
+
+
+def _validate_hex_color(color: str, default: str = "#7B2FF7") -> str:
+    """
+    Validates and normalises a CSS hex colour string.
+    Returns a 7-character hex code (e.g., '#7B2FF7').
+    Falls back to the provided default if the value is invalid.
+    """
+    if not color or not isinstance(color, str):
+        return default
+
+    color = color.strip()
+    # Accept 6-digit hex with leading #
+    if re.match(r"^#[0-9a-fA-F]{6}$", color):
+        return color.upper()
+    # Accept 3-digit shorthand: #ABC → #AABBCC
+    if re.match(r"^#[0-9a-fA-F]{3}$", color):
+        return f"#{color[1]*2}{color[2]*2}{color[3]*2}".upper()
+
+    logger.warning("Invalid hex color '%s', falling back to default '%s'.", color, default)
+    return default
 
 
 def _parse_gatekeeper_response(raw_text: str) -> Dict[str, Any]:
@@ -118,7 +167,9 @@ def _parse_gatekeeper_response(raw_text: str) -> Dict[str, Any]:
     Parses and validates the JSON response from the Vision model.
 
     Expected shape:
-      {"is_match": bool, "core_offer": str, "tagline": str, "promo_code": str}
+      {"is_match": bool, "core_offer": str, "tagline": str,
+       "promo_code": str, "color_primary_hex": str,
+       "color_secondary_hex": str}
 
     Raises ValueError if the response cannot be parsed or is
     missing required fields.
@@ -155,6 +206,16 @@ def _parse_gatekeeper_response(raw_text: str) -> Dict[str, Any]:
     data["tagline"] = str(data.get("tagline", "")).strip()
     data["promo_code"] = str(data.get("promo_code", "")).strip()
 
+    # Validate and normalise both gradient colors
+    data["color_primary_hex"] = _validate_hex_color(
+        str(data.get("color_primary_hex", data.get("brand_color_hex", ""))).strip(),
+        default="#7B2FF7",
+    )
+    data["color_secondary_hex"] = _validate_hex_color(
+        str(data.get("color_secondary_hex", "")).strip(),
+        default="#00D2FF",
+    )
+
     return data
 
 
@@ -187,9 +248,11 @@ def check_brand_alignment(
 
     Returns:
         dict — {
-            "core_offer":  str,  e.g. "30% off annual plans"
-            "tagline":     str,  e.g. "Scale Without Limits"
-            "promo_code":  str,  e.g. "SAVE30"
+            "core_offer":         str,  e.g. "30% off annual plans"
+            "tagline":            str,  e.g. "Scale Without Limits"
+            "promo_code":         str,  e.g. "SAVE30"
+            "color_primary_hex":  str,  e.g. "#4A90D9"
+            "color_secondary_hex": str, e.g. "#7B2FF7"
         }
 
     Raises:
@@ -212,7 +275,8 @@ def check_brand_alignment(
                 f"**Ad Image:** (attached below)\n"
                 f"**Target Page Headline:** \"{extracted_h1}\"\n\n"
                 f"Analyse the ad image and the headline. "
-                f"Extract the core offer, tagline, and any promo code. "
+                f"Extract the core offer, tagline, any promo code, "
+                f"and the TWO dominant brand colors as CSS hex codes. "
                 f"Respond with the JSON object as instructed."
             ),
         },
@@ -235,7 +299,7 @@ def check_brand_alignment(
                 {"role": "user", "content": user_content},
             ],
             temperature=0.0,     # deterministic
-            max_tokens=256,      # response is tiny JSON
+            max_tokens=300,      # slightly larger for two color fields
             top_p=1.0,
         )
     except Exception as exc:
@@ -257,18 +321,21 @@ def check_brand_alignment(
             "🚫 Brand Mismatch Detected!\n\n"
             "The ad creative's industry does not align with the "
             "target page. Personalization aborted to prevent "
-            "off-brand mutations.\n\n"
+            "off-brand injections.\n\n"
             f"Core offer detected: **{result['core_offer']}**\n"
             f"Target headline: **{extracted_h1}**"
         )
 
     logger.info(
-        "✅ Brand alignment verified. Offer: %s | Tagline: %s | Promo: %s",
+        "✅ Brand alignment verified. Offer: %s | Tagline: %s | Promo: %s | Colors: %s → %s",
         result["core_offer"], result["tagline"], result["promo_code"],
+        result["color_primary_hex"], result["color_secondary_hex"],
     )
 
     return {
         "core_offer": result["core_offer"],
         "tagline": result["tagline"],
         "promo_code": result["promo_code"],
+        "color_primary_hex": result["color_primary_hex"],
+        "color_secondary_hex": result["color_secondary_hex"],
     }

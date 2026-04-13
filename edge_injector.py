@@ -1,9 +1,15 @@
 """
 ╔══════════════════════════════════════════════════════════════════╗
-║  COMPONENT 6 — The Edge Injector                               ║
-║  Injects a <base> tag for CSS fidelity and a MutationObserver  ║
-║  script that continuously swaps target element text with the    ║
-║  AI-generated mutations.                                       ║
+║  COMPONENT 6 — The Edge Injector (Hybrid V4)                   ║
+║  Injects a <base> tag for CSS fidelity, absolutifies relative  ║
+║  URLs for iframe interactivity, injects a network interceptor  ║
+║  for client-side API calls (cart/add.js etc.), and appends a   ║
+║  hybrid script that performs:                                    ║
+║    1. Shimmer CSS + animated gradient banner                    ║
+║    2. Top announcement banner with gradient-pan animation       ║
+║    3. Animated shimmer badge next to the H1                     ║
+║    4. Non-destructive text mutation via data-troopod-target     ║
+║       selectors and replaceTextSafely()                         ║
 ╚══════════════════════════════════════════════════════════════════╝
 """
 
@@ -29,81 +35,380 @@ def _compute_base_href(target_url: str) -> str:
         https://example.com/pricing?ref=ad  →  https://example.com/
     """
     parsed = urlparse(target_url)
-    # Keep up to the last '/' in the path for relative resource resolution
     base_path = parsed.path.rsplit("/", 1)[0] + "/" if "/" in parsed.path else "/"
     return f"{parsed.scheme}://{parsed.netloc}{base_path}"
 
 
-def _build_mutation_script(verified_json: Dict[str, Any]) -> str:
+def _compute_origin(target_url: str) -> str:
     """
-    Generates the JavaScript MutationObserver script that will be
-    injected into the <body> of the proxied HTML.
+    Derives the origin (scheme + netloc + trailing slash) from target_url.
+    Used by the network interceptor to redirect relative API calls.
 
-    The script:
-      1. Parses the verified mutations JSON.
-      2. Defines an `applyMutations()` function that querySelector's
-         each target element and replaces its innerText.
-      3. Runs `applyMutations()` immediately on DOMContentLoaded.
-      4. Sets up a MutationObserver on <body> to re-apply mutations
-         whenever the DOM changes (handles lazy-loading, SPA hydration).
-      5. Self-terminates after 15 seconds to avoid infinite loops.
+    Example:
+        https://www.example.com/product-page/shoes  →  https://www.example.com/
+    """
+    parsed = urlparse(target_url)
+    return f"{parsed.scheme}://{parsed.netloc}/"
+
+
+def _absolutify_urls(soup: BeautifulSoup, target_url: str) -> int:
+    """
+    Converts relative URLs in href, src, action, and srcset attributes to
+    fully qualified absolute URLs using the target_url as the base.
+
+    This is critical for iframe interactivity — buttons, links, forms,
+    and resource loads must route to the live server, not the local
+    Streamlit host.
+
+    Returns the count of URLs rewritten.
+    """
+    count = 0
+
+    # ── Standard single-value attributes ─────────────────
+    tag_attr_map = [
+        ("a",      "href"),
+        ("link",   "href"),
+        ("img",    "src"),
+        ("script", "src"),
+        ("form",   "action"),
+        ("source", "src"),
+        ("video",  "src"),
+        ("audio",  "src"),
+        ("iframe", "src"),
+    ]
+
+    for tag_name, attr in tag_attr_map:
+        for tag in soup.find_all(tag_name):
+            value = tag.get(attr)
+            if not value:
+                continue
+            # Skip data URIs, anchors, javascript:, and already-absolute URLs
+            if value.startswith(("http://", "https://", "data:", "javascript:", "#", "mailto:")):
+                continue
+            absolute_url = urljoin(target_url, value)
+            tag[attr] = absolute_url
+            count += 1
+
+    # ── srcset attributes (source, img) ──────────────────
+    # srcset has the format: "url1 1x, url2 2x" or "url1 300w, url2 600w"
+    for tag in soup.find_all(["source", "img"]):
+        srcset = tag.get("srcset")
+        if not srcset:
+            continue
+
+        new_entries = []
+        modified = False
+        for entry in srcset.split(","):
+            entry = entry.strip()
+            if not entry:
+                continue
+            parts = entry.split()
+            url_part = parts[0]
+            descriptor = " ".join(parts[1:]) if len(parts) > 1 else ""
+
+            if not url_part.startswith(("http://", "https://", "data:")):
+                url_part = urljoin(target_url, url_part)
+                modified = True
+
+            new_entries.append(f"{url_part} {descriptor}".strip())
+
+        if modified:
+            tag["srcset"] = ", ".join(new_entries)
+            count += 1
+
+    return count
+
+
+def _build_network_interceptor(target_url: str) -> str:
+    """
+    Builds the JavaScript network interceptor snippet.
+
+    This intercepts fetch() and XMLHttpRequest.open() to redirect
+    relative API paths (e.g., /cart/add.js) to the live target server
+    instead of the local Streamlit host.
+
+    MUST be injected at the TOP of <head> before any native scripts run.
+    """
+    target_base = _compute_origin(target_url)
+
+    return f"""<script data-troopod="network-interceptor">
+(function(targetBaseUrl) {{
+    // 1. Intercept Fetch API
+    var originalFetch = window.fetch;
+    window.fetch = function() {{
+        var args = Array.prototype.slice.call(arguments);
+        if (typeof args[0] === 'string' && args[0].startsWith('/')) {{
+            args[0] = targetBaseUrl + args[0].substring(1);
+        }}
+        return originalFetch.apply(this, args);
+    }};
+
+    // 2. Intercept XHR (XMLHttpRequest)
+    var originalOpen = XMLHttpRequest.prototype.open;
+    XMLHttpRequest.prototype.open = function(method, url) {{
+        if (typeof url === 'string' && url.startsWith('/')) {{
+            url = targetBaseUrl + url.substring(1);
+        }}
+        var newArgs = Array.prototype.slice.call(arguments);
+        newArgs[1] = url;
+        return originalOpen.apply(this, newArgs);
+    }};
+
+    console.log('[DOM Weaver V4] Network interceptor active — redirecting API calls to:', targetBaseUrl);
+}})('{target_base}');
+</script>"""
+
+
+def _build_hybrid_v4_script(verified_json: Dict[str, Any]) -> str:
+    """
+    Generates the JavaScript payload for Hybrid V4 injection.
+
+    The script performs FOUR operations:
+      1. SHIMMER CSS + GRADIENT-PAN — Injects a <style> block with CSS
+         custom properties, shimmer animation for the badge, and a
+         gradient-pan animation for the banner.
+      2. BANNER — Creates an animated gradient banner at the top of page.
+      3. SHIMMER BADGE — Creates a shimmer-animated badge using
+         insertAdjacentElement('afterend') after the matched headline.
+      4. SAFE TEXT MUTATION — Uses replaceTextSafely() to update text
+         nodes without destroying SVGs, icons, or button HTML layout.
+         Targets nodes via data-troopod-target attribute selectors.
     """
 
-    # Serialise the mutations to a JS-safe JSON string
-    mutations_json_str = json.dumps(verified_json["mutations"], ensure_ascii=False)
+    mutations_json_str = json.dumps(
+        verified_json.get("mutations", []), ensure_ascii=False
+    )
+
+    injections = verified_json.get("injections", {})
+    banner_text = json.dumps(injections.get("banner_text", ""), ensure_ascii=False)
+    badge_text = json.dumps(injections.get("badge_text", ""), ensure_ascii=False)
+
+    colors = verified_json.get("colors", {})
+    color_primary = json.dumps(colors.get("primary", "#7B2FF7"), ensure_ascii=False)
+    color_secondary = json.dumps(colors.get("secondary", "#00D2FF"), ensure_ascii=False)
 
     return f"""
-<script data-injector="dynamic-dom-weaver">
+<script data-injector="dynamic-dom-weaver-v4">
 (function() {{
     'use strict';
 
-    // ── Mutation payload (injected by Python) ──────────
-    var MUTATIONS = {mutations_json_str};
+    // ── Payload (injected by Python) ────────────────────
+    var MUTATIONS       = {mutations_json_str};
+    var BANNER_TEXT     = {banner_text};
+    var BADGE_TEXT      = {badge_text};
+    var COLOR_PRIMARY   = {color_primary};
+    var COLOR_SECONDARY = {color_secondary};
 
-    // ── Track applied mutations for idempotency ────────
+    // ── Track applied mutations for idempotency ─────────
     var applied = {{}};
 
+    // ═══════════════════════════════════════════════════
+    //  Step 1 — Inject shimmer CSS + gradient-pan animation
+    // ═══════════════════════════════════════════════════
+    function injectStyles() {{
+        if (document.getElementById('troopod-styles')) return;
+
+        var style = document.createElement('style');
+        style.id = 'troopod-styles';
+        style.textContent = [
+            ':root {{',
+            '  --color-primary: ' + COLOR_PRIMARY + ';',
+            '  --color-secondary: ' + COLOR_SECONDARY + ';',
+            '}}',
+            '',
+            '/* Badge shimmer animation */',
+            '@keyframes troopod-shimmer {{',
+            '  0% {{ background-position: -200% center; }}',
+            '  100% {{ background-position: 200% center; }}',
+            '}}',
+            '',
+            '/* Banner gradient pan animation */',
+            '@keyframes troopod-gradient-pan {{',
+            '  0% {{ background-position: 0% 50%; }}',
+            '  50% {{ background-position: 100% 50%; }}',
+            '  100% {{ background-position: 0% 50%; }}',
+            '}}',
+            '',
+            '.troopod-badge {{',
+            '  background: linear-gradient(90deg, var(--color-primary) 0%, var(--color-secondary) 50%, var(--color-primary) 100%);',
+            '  background-size: 200% auto;',
+            '  animation: troopod-shimmer 3s linear infinite;',
+            '  color: white;',
+            '  padding: 0.25em 0.6em;',
+            '  border-radius: 0.4em;',
+            '  font-size: 0.65em;',
+            '  margin-left: 0.5em;',
+            '  vertical-align: middle;',
+            '  display: inline-block;',
+            '  white-space: nowrap;',
+            '  font-weight: 700;',
+            '  box-shadow: 0 4px 12px rgba(0,0,0,0.15);',
+            '}}',
+            '',
+            '.troopod-banner {{',
+            '  background: linear-gradient(270deg, var(--color-primary), var(--color-secondary), var(--color-primary));',
+            '  background-size: 200% 200%;',
+            '  animation: troopod-gradient-pan 6s ease infinite;',
+            '  color: white;',
+            '  text-align: center;',
+            '  padding: 12px;',
+            '  font-weight: bold;',
+            '  width: 100%;',
+            '  box-sizing: border-box;',
+            '  position: relative;',
+            '  z-index: 99999;',
+            '  font-family: Inter, system-ui, -apple-system, sans-serif;',
+            '  font-size: 14px;',
+            '  letter-spacing: 0.03em;',
+            '  box-shadow: 0 2px 10px rgba(0,0,0,0.1);',
+            '}}'
+        ].join('\\n');
+
+        var head = document.head || document.getElementsByTagName('head')[0];
+        if (head) {{
+            head.appendChild(style);
+            console.log('[DOM Weaver V4] Shimmer + gradient-pan styles injected.');
+        }}
+    }}
+
+    // ═══════════════════════════════════════════════════
+    //  Step 2 — Inject animated gradient banner at top
+    // ═══════════════════════════════════════════════════
+    function injectBanner() {{
+        if (!BANNER_TEXT || document.getElementById('troopod-banner')) return;
+
+        var banner = document.createElement('div');
+        banner.id = 'troopod-banner';
+        banner.className = 'troopod-banner';
+        banner.textContent = BANNER_TEXT;
+
+        document.body.prepend(banner);
+        console.log('[DOM Weaver V4] Animated banner injected:', BANNER_TEXT);
+    }}
+
+    // ═══════════════════════════════════════════════════
+    //  Step 3 — Inject shimmer badge after headline
+    // ═══════════════════════════════════════════════════
+    function injectBadge() {{
+        if (!BADGE_TEXT || document.getElementById('troopod-badge')) return;
+
+        // Target the exact stamped headline node
+        var headline = document.querySelector('[data-troopod-target="headline"]');
+        if (!headline) {{
+            // Fallback to generic h1 if stamp missing
+            headline = document.querySelector('h1');
+        }}
+        if (!headline) return;
+
+        var badge = document.createElement('span');
+        badge.id = 'troopod-badge';
+        badge.className = 'troopod-badge';
+        badge.innerText = BADGE_TEXT;
+
+        headline.insertAdjacentElement('afterend', badge);
+        console.log('[DOM Weaver V4] Shimmer badge injected after headline:', BADGE_TEXT);
+    }}
+
+    // ═══════════════════════════════════════════════════
+    //  Step 4 — Safe text mutation (preserves button HTML)
+    // ═══════════════════════════════════════════════════
+
     /**
-     * Applies text mutations to matched DOM elements.
-     * Uses querySelector to find the FIRST matching element
-     * for each selector.
+     * Replaces the text content of an element without destroying
+     * child elements (SVGs, icons, spans, flexbox layout).
+     *
+     * Strategy: iterate over element.childNodes, collect all
+     * TEXT_NODE (nodeType === 3) with non-empty trimmed text,
+     * then update the nodeValue of the LONGEST text node.
+     * This preserves icons, spans, and event listeners.
      */
+    function replaceTextSafely(element, newText) {{
+        var textNodes = [];
+        for (var i = 0; i < element.childNodes.length; i++) {{
+            var node = element.childNodes[i];
+            if (node.nodeType === 3) {{  // Node.TEXT_NODE
+                var trimmed = node.nodeValue.trim();
+                if (trimmed.length > 0) {{
+                    textNodes.push({{ node: node, length: trimmed.length }});
+                }}
+            }}
+        }}
+
+        if (textNodes.length > 0) {{
+            // Sort by length descending, pick the largest text node
+            textNodes.sort(function(a, b) {{ return b.length - a.length; }});
+            textNodes[0].node.nodeValue = newText;
+            return true;
+        }}
+
+        // Fallback: no direct text nodes found — try first-level children
+        // that are inline elements (span, strong, em, b, i)
+        var inlineTags = ['SPAN', 'STRONG', 'EM', 'B', 'I'];
+        for (var j = 0; j < element.children.length; j++) {{
+            var child = element.children[j];
+            if (inlineTags.indexOf(child.tagName) !== -1 && child.textContent.trim()) {{
+                child.textContent = newText;
+                return true;
+            }}
+        }}
+
+        // Last resort — only if element has no complex children
+        if (element.children.length === 0) {{
+            element.textContent = newText;
+            return true;
+        }}
+
+        // Truly complex element — prepend a text node
+        var tn = document.createTextNode(newText);
+        element.insertBefore(tn, element.firstChild);
+        return true;
+    }}
+
     function applyMutations() {{
         MUTATIONS.forEach(function(mut) {{
-            // Skip if already applied with same text
             if (applied[mut.selector] === mut.new_text) return;
 
             var el = document.querySelector(mut.selector);
             if (el) {{
-                // Store original for debugging
                 if (!el.dataset.originalText) {{
                     el.dataset.originalText = el.innerText;
                 }}
 
-                el.innerText = mut.new_text;
+                replaceTextSafely(el, mut.new_text);
                 applied[mut.selector] = mut.new_text;
 
                 console.log(
-                    '[DOM Weaver] Mutated <' + mut.selector + '>:',
+                    '[DOM Weaver V4] Mutated ' + mut.selector + ':',
                     el.dataset.originalText, '→', mut.new_text
                 );
+            }} else {{
+                console.warn('[DOM Weaver V4] Selector not found:', mut.selector);
             }}
         }});
     }}
 
-    // ── Initial application on DOM ready ───────────────
-    if (document.readyState === 'loading') {{
-        document.addEventListener('DOMContentLoaded', applyMutations);
-    }} else {{
+    // ═══════════════════════════════════════════════════
+    //  Orchestration
+    // ═══════════════════════════════════════════════════
+    function run() {{
+        injectStyles();
+        injectBanner();
         applyMutations();
+        injectBadge();
     }}
 
-    // ── MutationObserver for late-rendering elements ───
-    var observer = new MutationObserver(function(mutationsList) {{
-        applyMutations();
+    // ── Initial application on DOM ready ───────────────
+    if (document.readyState === 'loading') {{
+        document.addEventListener('DOMContentLoaded', run);
+    }} else {{
+        run();
+    }}
+
+    // ── MutationObserver for late-rendering SPAs ───────
+    var observer = new MutationObserver(function() {{
+        run();
     }});
 
-    // Start observing once body is available
     function startObserver() {{
         if (document.body) {{
             observer.observe(document.body, {{
@@ -112,16 +417,15 @@ def _build_mutation_script(verified_json: Dict[str, Any]) -> str:
                 characterData: true
             }});
         }} else {{
-            // Body not yet available — retry
             setTimeout(startObserver, 50);
         }}
     }}
     startObserver();
 
-    // ── Self-destruct timer (prevent infinite looping) ─
+    // ── Self-destruct timer ────────────────────────────
     setTimeout(function() {{
         observer.disconnect();
-        console.log('[DOM Weaver] Observer disconnected after timeout.');
+        console.log('[DOM Weaver V4] Observer disconnected after timeout.');
     }}, 15000);
 
 }})();
@@ -131,13 +435,12 @@ def _build_mutation_script(verified_json: Dict[str, Any]) -> str:
 
 def _inject_base_tag(soup: BeautifulSoup, target_url: str) -> None:
     """
-    Injects or updates the <base href="..."> tag in the <head>.
-    This ensures all relative CSS, JS, and image paths resolve
-    correctly against the original domain.
+    Injects or updates the <base href="..."> tag as the FIRST element
+    inside the <head>. This ensures all relative CSS, JS, and image
+    paths resolve correctly against the original domain.
     """
     base_href = _compute_base_href(target_url)
 
-    # Check if a <head> exists; create if missing
     head = soup.find("head")
     if head is None:
         head = soup.new_tag("head")
@@ -146,37 +449,58 @@ def _inject_base_tag(soup: BeautifulSoup, target_url: str) -> None:
         else:
             soup.insert(0, head)
 
-    # Remove any existing <base> to avoid conflicts
     existing_base = head.find("base")
     if existing_base:
         existing_base.decompose()
 
-    # Create and prepend new <base> tag (must be first in <head>)
     base_tag = soup.new_tag("base", href=base_href)
     head.insert(0, base_tag)
 
-    logger.info("Injected <base href='%s'>", base_href)
+    logger.info("Injected <base href='%s'> as first <head> child.", base_href)
 
 
-def _inject_meta_csp_override(soup: BeautifulSoup) -> None:
+def _inject_network_interceptor(soup: BeautifulSoup, target_url: str) -> None:
     """
-    Injects a permissive Content-Security-Policy meta tag to prevent
-    the proxied page's CSP from blocking our injected script.
+    Injects the fetch/XHR network interceptor script at the TOP of <head>,
+    immediately after the <base> tag but BEFORE any native scripts.
 
-    This is necessary because some pages set strict CSP headers that
-    would block inline scripts.
+    This ensures that all relative API calls (e.g., /cart/add.js,
+    /api/variants) are redirected to the live target server instead of
+    hitting the local Streamlit host.
     """
     head = soup.find("head")
     if head is None:
         return
 
-    # Remove any existing CSP meta tags
+    interceptor_html = _build_network_interceptor(target_url)
+    interceptor_soup = BeautifulSoup(interceptor_html, "html.parser")
+    interceptor_tag = interceptor_soup.find("script")
+
+    if interceptor_tag:
+        # Insert after <base> (position 1) so it runs before native scripts
+        # but after the base href is established
+        base_tag = head.find("base")
+        if base_tag:
+            base_tag.insert_after(interceptor_tag)
+        else:
+            head.insert(0, interceptor_tag)
+
+        logger.info("Injected network interceptor (fetch + XHR) for: %s",
+                     _compute_origin(target_url))
+
+
+def _inject_meta_csp_override(soup: BeautifulSoup) -> None:
+    """
+    Removes restrictive Content-Security-Policy meta tags to prevent
+    the proxied page's CSP from blocking our injected script.
+    """
+    head = soup.find("head")
+    if head is None:
+        return
+
     for meta in head.find_all("meta", attrs={"http-equiv": "Content-Security-Policy"}):
         meta.decompose()
 
-    # We intentionally do NOT inject a new one — we rely on the
-    # Streamlit iframe sandbox being permissive enough. This function
-    # only removes blocking CSPs from the original page.
     logger.info("Cleared existing CSP meta tags (if any).")
 
 
@@ -190,40 +514,52 @@ def inject_and_render(
     verified_json: Dict[str, Any],
 ) -> str:
     """
-    Component 6 — Main entry point.
+    Component 6 — Main entry point (Hybrid V4).
 
-    Takes the raw HTML, injects a <base> tag for asset resolution,
-    clears restrictive CSP headers, and appends a MutationObserver
-    script that applies the verified text mutations.
+    Takes the raw HTML (with data-troopod-target stamps from C1),
+    absolutifies relative URLs for iframe interactivity, injects a
+    <base> tag for asset resolution, a network interceptor for API
+    call redirection, clears restrictive CSP headers, and appends a
+    Hybrid V4 script that performs:
+      - Shimmer CSS + gradient-pan banner animation
+      - Top announcement banner with animated gradient
+      - Animated shimmer badge after the stamped headline
+      - Non-destructive text mutation via replaceTextSafely()
 
     Args:
-        raw_html:       The full HTML string from Component 1.
-        target_url:     The original URL (for <base href>).
-        verified_json:  The hallucination-verified mutations dict
-                        from Component 4 (shape: {"mutations": [...]}).
+        raw_html:       The full HTML string from Component 1
+                        (already contains data-troopod-target stamps).
+        target_url:     The original URL (for <base href> and
+                        URL absolutification).
+        verified_json:  The hallucination-verified dict from C4
+                        with shape:
+                        {"mutations": [...], "injections": {...},
+                         "colors": {"primary": ..., "secondary": ...}}.
 
     Returns:
         str — the modified HTML string, ready for rendering
               via `st.components.v1.html()`.
-
-    Note:
-        We deliberately do NOT strip native <script> tags from the
-        original page — the spec requires preserving them.
     """
 
     # ── 1. Parse the raw HTML ────────────────────────────
     soup = BeautifulSoup(raw_html, "html.parser")
 
-    # ── 2. Inject <base href> for CSS/asset fidelity ─────
+    # ── 2. Inject <base href> as the FIRST <head> child ──
     _inject_base_tag(soup, target_url)
 
-    # ── 3. Clear restrictive CSP meta tags ───────────────
+    # ── 3. Inject network interceptor (fetch + XHR fix) ──
+    _inject_network_interceptor(soup, target_url)
+
+    # ── 4. Clear restrictive CSP meta tags ───────────────
     _inject_meta_csp_override(soup)
 
-    # ── 4. Build and inject the MutationObserver script ──
-    mutation_script = _build_mutation_script(verified_json)
+    # ── 5. Absolutify relative URLs (interactivity fix) ──
+    rewritten_count = _absolutify_urls(soup, target_url)
+    logger.info("Absolutified %d relative URLs for iframe interactivity.", rewritten_count)
 
-    # Ensure <body> exists
+    # ── 6. Build and inject the Hybrid V4 script ─────────
+    hybrid_script = _build_hybrid_v4_script(verified_json)
+
     body = soup.find("body")
     if body is None:
         body = soup.new_tag("body")
@@ -232,19 +568,17 @@ def inject_and_render(
         else:
             soup.append(body)
 
-    # Append script at the very end of <body>
-    # (BeautifulSoup needs us to parse the script as a fragment)
-    script_soup = BeautifulSoup(mutation_script, "html.parser")
+    script_soup = BeautifulSoup(hybrid_script, "html.parser")
     script_tag = script_soup.find("script")
     if script_tag:
         body.append(script_tag)
 
-    # ── 5. Add a debug comment for traceability ──────────
-    comment = Comment(" Dynamic DOM Weaver — AI-personalized landing page ")
+    # ── 7. Add a debug comment for traceability ──────────
+    comment = Comment(" Dynamic DOM Weaver V4 — AI-personalized landing page (shimmer + gradient-pan + network intercept) ")
     if soup.html:
         soup.html.insert(0, comment)
 
-    # ── 6. Serialise and return ──────────────────────────
+    # ── 8. Serialise and return ──────────────────────────
     modified_html = str(soup)
     logger.info(
         "Edge injection complete. Output size: %d chars", len(modified_html)

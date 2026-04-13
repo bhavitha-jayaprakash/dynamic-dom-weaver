@@ -3,13 +3,12 @@
 ║  Dynamic DOM Weaver — Streamlit Application (Main Entry)       ║
 ║  B2B SaaS Growth Tool: Ad Creative → Personalized Landing Page ║
 ║                                                                 ║
-║  Full Pipeline:                                                 ║
-║    ✅ Component 1 — Ingestion & DOM Extractor                   ║
-║    ✅ Component 2 — Relevance Gatekeeper                        ║
-║    ✅ Component 3 — Context-Aware Optimizer                     ║
+║  Full Pipeline (Hybrid V4 — Deep Proxy + Premium Animations): ║
+║    ✅ Component 1 — Ingestion & DOM Extractor + Data Stamping   ║
+║    ✅ Component 2 — Relevance Gatekeeper + Gradient Colors      ║
+║    ✅ Component 3 & 5 — Hybrid V3 (Exact Target Mutations)     ║
 ║    ✅ Component 4 — Deterministic Hallucination Verifier        ║
-║    ✅ Component 5 — Structured Formatter                        ║
-║    ✅ Component 6 — Edge Injector                               ║
+║    ✅ Component 6 — Edge Injector (Network Intercept + Shimmer) ║
 ╚══════════════════════════════════════════════════════════════════╝
 """
 
@@ -197,7 +196,7 @@ with col_right:
     target_url = st.text_input(
         "Enter the URL of the page to personalize",
         placeholder="https://example.com/pricing",
-        help="The landing page whose H1, subheadline, and CTA will be rewritten to match the ad.",
+        help="The landing page whose text will be rewritten, with a gradient banner and badge injected.",
     )
 
 st.divider()
@@ -228,7 +227,7 @@ if run_button and uploaded_file and target_url:
             dom_data = extract_dom_data(target_url)
 
         with status_area:
-            st.success("✅ Component 1 — DOM Extraction Complete")
+            st.success("✅ Component 1 — DOM Extraction Complete (nodes stamped)")
 
             c1, c2, c3 = st.columns(3)
             with c1:
@@ -239,7 +238,7 @@ if run_button and uploaded_file and target_url:
                     f'<div class="metric-card">'
                     f'<h4>H1 — Headline</h4>'
                     f'<p>{h1_text}</p>'
-                    f'<small>{h1_len} chars</small>'
+                    f'<small style="color:#9ca3af;">{h1_len} chars</small>'
                     f'</div>',
                     unsafe_allow_html=True,
                 )
@@ -253,7 +252,7 @@ if run_button and uploaded_file and target_url:
                     f'<div class="metric-card">'
                     f'<h4>P — Subheadline</h4>'
                     f'<p>{display_p}</p>'
-                    f'<small>{p_len} chars</small>'
+                    f'<small style="color:#9ca3af;">{p_len} chars</small>'
                     f'</div>',
                     unsafe_allow_html=True,
                 )
@@ -264,9 +263,9 @@ if run_button and uploaded_file and target_url:
                 a_len  = a_node.get("char_length", 0)
                 st.markdown(
                     f'<div class="metric-card">'
-                    f'<h4>A — CTA Button</h4>'
+                    f'<h4>CTA — Button</h4>'
                     f'<p>{a_text}</p>'
-                    f'<small>{a_len} chars</small>'
+                    f'<small style="color:#9ca3af;">{a_len} chars</small>'
                     f'</div>',
                     unsafe_allow_html=True,
                 )
@@ -295,8 +294,8 @@ if run_button and uploaded_file and target_url:
         with status_area:
             st.success("✅ Component 2 — Brand Alignment Verified")
 
-            # Show all extracted ad fields
-            ai_c1, ai_c2, ai_c3 = st.columns(3)
+            # Show all extracted ad fields + gradient preview
+            ai_c1, ai_c2, ai_c3, ai_c4 = st.columns(4)
             with ai_c1:
                 st.markdown(
                     f'<div class="metric-card">'
@@ -306,7 +305,7 @@ if run_button and uploaded_file and target_url:
                     unsafe_allow_html=True,
                 )
             with ai_c2:
-                tagline_display = ad_info["tagline"] or "—"
+                tagline_display = ad_info.get("tagline") or "—"
                 st.markdown(
                     f'<div class="metric-card">'
                     f'<h4>Tagline</h4>'
@@ -315,7 +314,7 @@ if run_button and uploaded_file and target_url:
                     unsafe_allow_html=True,
                 )
             with ai_c3:
-                promo_display = ad_info["promo_code"] or "—"
+                promo_display = ad_info.get("promo_code") or "—"
                 st.markdown(
                     f'<div class="metric-card">'
                     f'<h4>Promo Code</h4>'
@@ -323,36 +322,106 @@ if run_button and uploaded_file and target_url:
                     f'</div>',
                     unsafe_allow_html=True,
                 )
+            with ai_c4:
+                c_primary = ad_info.get("color_primary_hex", "#7B2FF7")
+                c_secondary = ad_info.get("color_secondary_hex", "#00D2FF")
+                st.markdown(
+                    f'<div class="metric-card">'
+                    f'<h4>Brand Gradient</h4>'
+                    f'<div style="display:flex;align-items:center;gap:8px;margin-top:4px;">'
+                    f'<div style="width:100%;height:24px;border-radius:6px;'
+                    f'background:linear-gradient(135deg, {c_primary}, {c_secondary});"></div>'
+                    f'</div>'
+                    f'<p style="font-size:0.8rem;margin-top:6px;color:#9ca3af;">'
+                    f'{c_primary} → {c_secondary}</p>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
 
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        #  COMPONENT 3 & 5 — Mutation Generation
+        #  COMPONENT 3 & 5 — Hybrid V3 Generation
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        progress.progress(45, text="✍️ Component 3 — Generating optimized mutations…")
+        progress.progress(45, text="✍️ Component 3 — Generating exact-target mutations…")
 
         with st.spinner("Calling NVIDIA NIM Text model for CRO copywriting…"):
             mutations_json = generate_mutations(ad_info, dom_data)
 
         with status_area:
-            st.success("✅ Component 3 & 5 — Mutations Generated & Formatted")
+            st.success("✅ Component 3 & 5 — Hybrid V3 Output Generated")
 
-            # Display mutation preview
-            for mut in mutations_json["mutations"]:
-                tag = mut["selector"].upper()
-                original = dom_data["elements"].get(mut["selector"], {}).get("text", "—")
+            # ── Gradient colors from response ────────────
+            gen_colors = mutations_json.get("colors", {})
+            grad_primary = gen_colors.get("primary", ad_info.get("color_primary_hex", "#7B2FF7"))
+            grad_secondary = gen_colors.get("secondary", ad_info.get("color_secondary_hex", "#00D2FF"))
+
+            # ── Banner preview ───────────────────────────
+            inj = mutations_json.get("injections", {})
+            st.markdown(
+                f'<div class="step-card">'
+                f'<h4>🏷️ Banner Preview</h4>'
+                f'<div style="background:linear-gradient(135deg, {grad_primary}, {grad_secondary});'
+                f'color:white;text-align:center;font-weight:bold;padding:12px 16px;'
+                f'border-radius:6px;margin-top:0.5rem;font-size:0.95rem;'
+                f'letter-spacing:0.03em;">'
+                f'{inj.get("banner_text", "—")}'
+                f'</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+
+            # ── Text mutation previews ───────────────────
+            # Map data-troopod-target selectors to friendly labels + element keys
+            selector_labels = {
+                '[data-troopod-target="headline"]': ('H1 — Headline', 'h1'),
+                '[data-troopod-target="subheadline"]': ('P — Subheadline', 'p'),
+                '[data-troopod-target="cta"]': ('CTA — Button', 'a'),
+            }
+            for mut in mutations_json.get("mutations", []):
+                sel = mut.get("selector", "?")
+                label, elem_key = selector_labels.get(sel, (sel, ""))
+                original = dom_data["elements"].get(elem_key, {}).get("text", "—")
                 st.markdown(
                     f'<div class="step-card">'
-                    f'<h4>&lt;{tag}&gt; Mutation</h4>'
+                    f'<h4>{label} Mutation</h4>'
                     f'<p><span style="color:#ef4444;text-decoration:line-through;">{original}</span></p>'
-                    f'<p class="text-cyan">→ {mut["new_text"]}</p>'
+                    f'<p class="text-cyan">→ {mut.get("new_text", "—")}</p>'
                     f'</div>',
                     unsafe_allow_html=True,
                 )
+
+            # ── Badge preview  (shimmer-style) ───────────
+            st.markdown(
+                f'<div class="step-card">'
+                f'<h4>✨ Shimmer Badge Preview</h4>'
+                f'<p style="margin-top:0.5rem;">'
+                f'<span style="background:linear-gradient(90deg, {grad_primary} 0%, {grad_secondary} 50%, {grad_primary} 100%);'
+                f'background-size:200% auto;color:white;padding:0.25em 0.6em;border-radius:0.4em;'
+                f'font-size:0.85rem;font-weight:700;display:inline-block;'
+                f'box-shadow:0 4px 12px rgba(0,0,0,0.15);">'
+                f'{inj.get("badge_text", "—")}'
+                f'</span></p>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
 
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         #  COMPONENT 4 — Hallucination Verification
         #  (with retry loop back to Component 3)
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         progress.progress(65, text="🔬 Component 4 — Verifying for hallucinations…")
+
+        # Build a verifier payload that includes BOTH mutation text
+        # AND injection text (banner + badge) for full coverage.
+        def _build_verifier_payload(mj):
+            items = []
+            for m in mj.get("mutations", []):
+                items.append({"selector": m.get("selector", ""), "new_text": m.get("new_text", "")})
+            inj_data = mj.get("injections", {})
+            items.append({"selector": "banner", "new_text": inj_data.get("banner_text", "")})
+            items.append({"selector": "badge",  "new_text": inj_data.get("badge_text", "")})
+            return {"mutations": items}
+
+        verifier_payload = _build_verifier_payload(mutations_json)
 
         verified = False
         verification_attempts = 0
@@ -361,7 +430,7 @@ if run_button and uploaded_file and target_url:
             verification_attempts += 1
 
             with st.spinner(f"Hallucination check — attempt {verification_attempts}/{MAX_HALLUCINATION_RETRIES}…"):
-                is_clean, reason = verify_hallucinations(ad_info["core_offer"], mutations_json)
+                is_clean, reason = verify_hallucinations(ad_info["core_offer"], verifier_payload)
 
             if is_clean:
                 verified = True
@@ -383,6 +452,7 @@ if run_button and uploaded_file and target_url:
                 )
                 with st.spinner("Re-calling NVIDIA NIM for cleaner output…"):
                     mutations_json = generate_mutations(ad_info, dom_data)
+                    verifier_payload = _build_verifier_payload(mutations_json)
 
         if not verified:
             raise ValueError(
@@ -393,7 +463,7 @@ if run_button and uploaded_file and target_url:
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         #  COMPONENT 6 — Edge Injection & Rendering
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        progress.progress(85, text="💉 Component 6 — Injecting mutations into DOM…")
+        progress.progress(85, text="💉 Component 6 — Injecting network proxy + shimmer UI…")
 
         with st.spinner("Building personalized landing page…"):
             modified_html = inject_and_render(
@@ -405,7 +475,7 @@ if run_button and uploaded_file and target_url:
         progress.progress(100, text="✅ Pipeline complete — personalized page rendered!")
 
         with status_area:
-            st.success("✅ Component 6 — Edge Injection Complete")
+            st.success("✅ Component 6 — Hybrid V4 Injection Complete")
             st.markdown(
                 f'<div class="metric-card">'
                 f'<h4>Output Size</h4>'
@@ -419,7 +489,7 @@ if run_button and uploaded_file and target_url:
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         st.divider()
         st.subheader("🎯 Personalized Landing Page")
-        st.caption("The page below has been mutated to match your ad creative's core offer.")
+        st.caption("Text mutated (safe mode) + shimmer badge, gradient-pan banner & network intercept injected.")
 
         # Render in an iframe via Streamlit's html component
         st.markdown('<div class="output-frame">', unsafe_allow_html=True)
@@ -427,22 +497,28 @@ if run_button and uploaded_file and target_url:
         st.markdown('</div>', unsafe_allow_html=True)
 
         # ── Optional: show the raw JSON & debug info ─────
-        with st.expander("🔧 Debug — Mutation JSON Payload"):
+        with st.expander("🔧 Debug — Hybrid V4 JSON Payload"):
             st.json(mutations_json)
 
         with st.expander("🔧 Debug — Pipeline Summary"):
+            gen_inj = mutations_json.get("injections", {})
+            gen_col = mutations_json.get("colors", {})
             st.markdown(f"""
 | Step | Status |
 |------|--------|
-| DOM Extraction | ✅ Complete |
+| DOM Extraction | ✅ Stamped (data-troopod-target) |
 | Jina Reader | {"✅ Available" if dom_data["jina_text"] else "⚠️ Unavailable"} |
 | Brand Alignment | ✅ Matched |
 | Core Offer | `{ad_info["core_offer"]}` |
 | Tagline | `{ad_info.get("tagline", "—")}` |
 | Promo Code | `{ad_info.get("promo_code", "—")}` |
-| Mutation Generation | ✅ Complete |
+| Gradient | `{gen_col.get('primary', '—')}` → `{gen_col.get('secondary', '—')}` |
+| Mutations | ✅ {len(mutations_json.get('mutations', []))} nodes via data‑troopod‑target |
+| Banner | 🎨 `{gen_inj.get('banner_text', '—')}` (gradient‑pan) |
+| Badge | ✨ `{gen_inj.get('badge_text', '—')}` (shimmer) |
 | Hallucination Check | ✅ Passed (attempt {verification_attempts}) |
-| Edge Injection | ✅ Rendered |
+| Network Interceptor | ✅ fetch + XHR redirected |
+| Edge Injection | ✅ Shimmer + Gradient‑Pan + Safe Mutation |
 | Output Size | {len(modified_html):,} chars |
 """)
 
@@ -459,13 +535,15 @@ if run_button and uploaded_file and target_url:
         st.error(f"💥 Unexpected error:\n\n```\n{exc}\n```")
         logger.exception("Unhandled error in pipeline")
 
+
 # ══════════════════════════════════════════════════════════
 #  FOOTER
 # ══════════════════════════════════════════════════════════
 st.markdown("---")
 st.caption(
-    "Dynamic DOM Weaver v1.0.0 • "
+    "Dynamic DOM Weaver v6.0.0 • "
     "Powered by NVIDIA NIM + Jina Reader • "
     "Zero-cost inference stack • "
-    "Components: Extractor → Gatekeeper → Optimizer → Verifier → Injector"
+    "Hybrid V4: Stamper → Gatekeeper → Optimizer → Verifier → Deep Proxy Injector"
 )
+
