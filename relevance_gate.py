@@ -79,24 +79,38 @@ def _encode_image_to_base64(image_bytes: bytes) -> str:
     return f"data:image/png;base64,{b64}"
 
 
-def _sanitise_json_response(raw: str) -> str:
+def _sanitise_json_response(raw: str) -> dict:
     """
-    Strips common LLM artefacts from the response string so we
-    can safely parse JSON:
+    Robustly extracts and parses a JSON object from raw LLM output.
+
+    Handles common model quirks:
+      - "Answer: {...}"  or  "Output: {...}"  preambles
       - Markdown code fences (```json ... ```)
-      - Leading/trailing whitespace
       - Trailing commas before closing braces
+      - Leading/trailing whitespace
+
+    Strategy: locate the first '{' and last '}' and parse only
+    the text between them.
+
+    Returns the parsed dict.
+    Raises ValueError if no JSON object can be found.
     """
-    # Remove markdown fences
-    raw = re.sub(r"```(?:json)?\s*", "", raw)
-    raw = re.sub(r"```\s*$", "", raw)
     raw = raw.strip()
 
-    # Remove trailing commas (e.g. {"a": 1,} → {"a": 1})
-    raw = re.sub(r",\s*}", "}", raw)
-    raw = re.sub(r",\s*]", "]", raw)
+    # Locate the JSON object boundaries
+    start_idx = raw.find("{")
+    end_idx = raw.rfind("}") + 1
 
-    return raw
+    if start_idx == -1 or end_idx == 0:
+        raise ValueError(f"No JSON object found in response: {raw}")
+
+    json_str = raw[start_idx:end_idx]
+
+    # Clean trailing commas (e.g. {"a": 1,} → {"a": 1})
+    json_str = re.sub(r",\s*}", "}", json_str)
+    json_str = re.sub(r",\s*]", "]", json_str)
+
+    return json.loads(json_str)
 
 
 def _parse_gatekeeper_response(raw_text: str) -> Dict[str, Any]:
@@ -109,11 +123,9 @@ def _parse_gatekeeper_response(raw_text: str) -> Dict[str, Any]:
     Raises ValueError if the response cannot be parsed or is
     missing required fields.
     """
-    sanitised = _sanitise_json_response(raw_text)
-
     try:
-        data = json.loads(sanitised)
-    except json.JSONDecodeError as exc:
+        data = _sanitise_json_response(raw_text)
+    except (json.JSONDecodeError, ValueError) as exc:
         logger.error("Failed to parse gatekeeper JSON: %s\nRaw: %s", exc, raw_text)
         raise ValueError(
             f"The brand-safety model returned unparseable output.\n"

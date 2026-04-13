@@ -232,23 +232,44 @@ if run_button and uploaded_file and target_url:
 
             c1, c2, c3 = st.columns(3)
             with c1:
-                st.markdown('<div class="metric-card"><h4>H1 — Headline</h4>', unsafe_allow_html=True)
-                h1_text = dom_data["elements"]["h1"]["text"] or "⚠️ Not found"
-                h1_len  = dom_data["elements"]["h1"]["char_length"]
-                st.markdown(f'<p>{h1_text}</p><small>{h1_len} chars</small></div>', unsafe_allow_html=True)
+                h1_node = dom_data["elements"].get("h1", {})
+                h1_text = h1_node.get("text", "") or "⚠️ Not found"
+                h1_len  = h1_node.get("char_length", 0)
+                st.markdown(
+                    f'<div class="metric-card">'
+                    f'<h4>H1 — Headline</h4>'
+                    f'<p>{h1_text}</p>'
+                    f'<small>{h1_len} chars</small>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
 
             with c2:
-                st.markdown('<div class="metric-card"><h4>P — Subheadline</h4>', unsafe_allow_html=True)
-                p_text = dom_data["elements"]["p"]["text"] or "⚠️ Not found"
-                p_len  = dom_data["elements"]["p"]["char_length"]
+                p_node  = dom_data["elements"].get("p", {})
+                p_text  = p_node.get("text", "") or "⚠️ Not found"
+                p_len   = p_node.get("char_length", 0)
                 display_p = p_text[:120] + "…" if len(p_text) > 120 else p_text
-                st.markdown(f'<p>{display_p}</p><small>{p_len} chars</small></div>', unsafe_allow_html=True)
+                st.markdown(
+                    f'<div class="metric-card">'
+                    f'<h4>P — Subheadline</h4>'
+                    f'<p>{display_p}</p>'
+                    f'<small>{p_len} chars</small>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
 
             with c3:
-                st.markdown('<div class="metric-card"><h4>A — CTA Button</h4>', unsafe_allow_html=True)
-                a_text = dom_data["elements"]["a"]["text"] or "⚠️ Not found"
-                a_len  = dom_data["elements"]["a"]["char_length"]
-                st.markdown(f'<p>{a_text}</p><small>{a_len} chars</small></div>', unsafe_allow_html=True)
+                a_node = dom_data["elements"].get("a", {})
+                a_text = a_node.get("text", "") or "⚠️ Not found"
+                a_len  = a_node.get("char_length", 0)
+                st.markdown(
+                    f'<div class="metric-card">'
+                    f'<h4>A — CTA Button</h4>'
+                    f'<p>{a_text}</p>'
+                    f'<small>{a_len} chars</small>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
 
             if dom_data["jina_text"]:
                 st.info(f"📄 Jina Reader extracted {len(dom_data['jina_text']):,} characters of clean text.")

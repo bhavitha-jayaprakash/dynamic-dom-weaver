@@ -37,11 +37,19 @@ MAX_RETRIES = 3
 # ──────────────────────────────────────────────────────────
 # The mutation-generation system prompt
 # ──────────────────────────────────────────────────────────
-OPTIMIZER_SYSTEM_PROMPT = """You are a senior conversion-rate-optimization (CRO) copywriter.
+OPTIMIZER_SYSTEM_PROMPT = """You are a surgical copy-editor and senior conversion-rate-optimization (CRO) copywriter.
 
 Your task is to rewrite three pieces of text from a landing page so they
 align with a specific promotional offer, while preserving the original
 tone, brand voice, and approximate character length.
+
+⚠️  CRITICAL — IDENTITY PRESERVATION RULE:
+You are a surgical copy-editor. Do NOT erase the original product name,
+brand, or core identity from the text. You must WEAVE the new offer
+(`core_offer` and `tagline`) into the original text contextually.
+For example, if the original H1 is "Cloudtilt Sneakers", the new H1
+could be "Cloudtilt Sneakers | Conquer the Monsoon (30% Off)".
+Preserve the core subject of the original node at all costs.
 
 You will receive:
 - A CORE OFFER (e.g., "30% off annual plans")
@@ -61,7 +69,9 @@ RULES:
 7. If an original element says "No Headline Found", "No Subheadline Found",
    or "No CTA Button Found", skip it — output its new_text as the same
    sentinel string unchanged.
-8. Respond with ONLY valid JSON — no markdown fences, no commentary.
+8. NEVER replace the entire headline with purely promotional text.
+   The original product/brand name MUST remain visible in the output.
+9. Respond with ONLY valid JSON — no markdown fences, no commentary.
 
 OUTPUT FORMAT (strict JSON, nothing else):
 {
@@ -146,20 +156,38 @@ def _build_user_prompt(ad_info: Dict[str, str], elements: Dict[str, Any]) -> str
     )
 
 
-def _sanitise_json_response(raw: str) -> str:
+def _sanitise_json_response(raw: str) -> dict:
     """
-    Strips common LLM artefacts so we can safely parse JSON.
+    Robustly extracts and parses a JSON object from raw LLM output.
+
+    Handles common model quirks:
+      - "Answer: {...}"  or  "Output: {...}"  preambles
+      - Markdown code fences (```json ... ```)
+      - Trailing commas before closing braces
+      - Leading/trailing whitespace
+
+    Strategy: locate the first '{' and last '}' and parse only
+    the text between them.
+
+    Returns the parsed dict.
+    Raises ValueError if no JSON object can be found.
     """
-    # Remove markdown fences
-    raw = re.sub(r"```(?:json)?\s*", "", raw)
-    raw = re.sub(r"```\s*$", "", raw)
     raw = raw.strip()
 
-    # Remove trailing commas
-    raw = re.sub(r",\s*}", "}", raw)
-    raw = re.sub(r",\s*]", "]", raw)
+    # Locate the JSON object boundaries
+    start_idx = raw.find("{")
+    end_idx = raw.rfind("}") + 1
 
-    return raw
+    if start_idx == -1 or end_idx == 0:
+        raise ValueError(f"No JSON object found in response: {raw}")
+
+    json_str = raw[start_idx:end_idx]
+
+    # Clean trailing commas (e.g. {"a": 1,} → {"a": 1})
+    json_str = re.sub(r",\s*}", "}", json_str)
+    json_str = re.sub(r",\s*]", "]", json_str)
+
+    return json.loads(json_str)
 
 
 def _validate_mutations_schema(data: Any) -> List[Dict[str, str]]:
@@ -268,8 +296,7 @@ def generate_mutations(
             logger.info("Optimizer raw response (attempt %d): %s", attempt, raw_text)
 
             # Parse & validate
-            sanitised = _sanitise_json_response(raw_text)
-            parsed = json.loads(sanitised)
+            parsed = _sanitise_json_response(raw_text)
             mutations = _validate_mutations_schema(parsed)
 
             logger.info("✅ Mutations generated successfully on attempt %d", attempt)
