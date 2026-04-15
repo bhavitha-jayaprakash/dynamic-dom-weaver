@@ -74,19 +74,21 @@ def _flatten_mutations_text(mutations_json: Dict[str, Any]) -> str:
 def verify_hallucinations(
     core_offer_string: str,
     generated_json: Dict[str, Any],
+    original_text: str = "",
 ) -> Tuple[bool, str]:
     """
     Component 4 — Main entry point.
 
     Compares every numerical claim (dollars, percentages, bare numbers)
     found in the generated mutations against those present in the
-    core offer string.
+    core offer string and original text.
 
     Args:
         core_offer_string:  The offer extracted by Component 2
                             (e.g., "30% off annual plans").
         generated_json:     The mutations dict from Component 3
                             (e.g., {"mutations": [...]}).
+        original_text:      Concatenated original DOM text.
 
     Returns:
         Tuple[bool, str]:
@@ -96,9 +98,12 @@ def verify_hallucinations(
     This function has ZERO external dependencies — pure Python + regex.
     """
 
-    # ── 1. Extract claims from the core offer ────────────
+    # ── 1. Extract claims from the core offer & original text ──
     offer_dollars, offer_percents, offer_nums = _extract_numerical_claims(
         core_offer_string
+    )
+    orig_dollars, orig_percents, orig_nums = _extract_numerical_claims(
+        original_text
     )
 
     logger.info(
@@ -121,19 +126,19 @@ def verify_hallucinations(
     hallucinated = []
 
     # Check dollar amounts
-    fabricated_dollars = gen_dollars - offer_dollars
+    fabricated_dollars = gen_dollars - offer_dollars - orig_dollars
     if fabricated_dollars:
         hallucinated.append(f"Dollar amounts not in offer: {fabricated_dollars}")
 
     # Check percentages
-    fabricated_percents = gen_percents - offer_percents
+    fabricated_percents = gen_percents - offer_percents - orig_percents
     if fabricated_percents:
         hallucinated.append(f"Percentages not in offer: {fabricated_percents}")
 
     # Check bare numbers — more lenient: we allow common
     # "harmless" numbers that are not promotional claims
     ALLOWED_BARE = {"1", "2", "3", "24", "7", "365", "0", "100"}
-    fabricated_nums = gen_nums - offer_nums - ALLOWED_BARE
+    fabricated_nums = gen_nums - offer_nums - orig_nums - ALLOWED_BARE
     if fabricated_nums:
         hallucinated.append(f"Bare numbers not in offer: {fabricated_nums}")
 

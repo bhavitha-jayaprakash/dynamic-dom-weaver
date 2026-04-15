@@ -339,79 +339,10 @@ if run_button and uploaded_file and target_url:
                 )
 
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        #  COMPONENT 3 & 5 — Hybrid V3 Generation
+        #  COMPONENT 3, 4 & 5 — Generation & Verification
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         progress.progress(45, text="✍️ Component 3 — Generating exact-target mutations…")
 
-        with st.spinner("Calling NVIDIA NIM Text model for CRO copywriting…"):
-            mutations_json = generate_mutations(ad_info, dom_data)
-
-        with status_area:
-            st.success("✅ Component 3 & 5 — Hybrid V3 Output Generated")
-
-            # ── Gradient colors from response ────────────
-            gen_colors = mutations_json.get("colors", {})
-            grad_primary = gen_colors.get("primary", ad_info.get("color_primary_hex", "#7B2FF7"))
-            grad_secondary = gen_colors.get("secondary", ad_info.get("color_secondary_hex", "#00D2FF"))
-
-            # ── Banner preview ───────────────────────────
-            inj = mutations_json.get("injections", {})
-            st.markdown(
-                f'<div class="step-card">'
-                f'<h4>🏷️ Banner Preview</h4>'
-                f'<div style="background:linear-gradient(135deg, {grad_primary}, {grad_secondary});'
-                f'color:white;text-align:center;font-weight:bold;padding:12px 16px;'
-                f'border-radius:6px;margin-top:0.5rem;font-size:0.95rem;'
-                f'letter-spacing:0.03em;">'
-                f'{inj.get("banner_text", "—")}'
-                f'</div>'
-                f'</div>',
-                unsafe_allow_html=True,
-            )
-
-            # ── Text mutation previews ───────────────────
-            # Map data-troopod-target selectors to friendly labels + element keys
-            selector_labels = {
-                '[data-troopod-target="headline"]': ('H1 — Headline', 'h1'),
-                '[data-troopod-target="subheadline"]': ('P — Subheadline', 'p'),
-                '[data-troopod-target="cta"]': ('CTA — Button', 'a'),
-            }
-            for mut in mutations_json.get("mutations", []):
-                sel = mut.get("selector", "?")
-                label, elem_key = selector_labels.get(sel, (sel, ""))
-                original = dom_data["elements"].get(elem_key, {}).get("text", "—")
-                st.markdown(
-                    f'<div class="step-card">'
-                    f'<h4>{label} Mutation</h4>'
-                    f'<p><span style="color:#ef4444;text-decoration:line-through;">{original}</span></p>'
-                    f'<p class="text-cyan">→ {mut.get("new_text", "—")}</p>'
-                    f'</div>',
-                    unsafe_allow_html=True,
-                )
-
-            # ── Badge preview  (shimmer-style) ───────────
-            st.markdown(
-                f'<div class="step-card">'
-                f'<h4>✨ Shimmer Badge Preview</h4>'
-                f'<p style="margin-top:0.5rem;">'
-                f'<span style="background:linear-gradient(90deg, {grad_primary} 0%, {grad_secondary} 50%, {grad_primary} 100%);'
-                f'background-size:200% auto;color:white;padding:0.25em 0.6em;border-radius:0.4em;'
-                f'font-size:0.85rem;font-weight:700;display:inline-block;'
-                f'box-shadow:0 4px 12px rgba(0,0,0,0.15);">'
-                f'{inj.get("badge_text", "—")}'
-                f'</span></p>'
-                f'</div>',
-                unsafe_allow_html=True,
-            )
-
-        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        #  COMPONENT 4 — Hallucination Verification
-        #  (with retry loop back to Component 3)
-        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        progress.progress(65, text="🔬 Component 4 — Verifying for hallucinations…")
-
-        # Build a verifier payload that includes BOTH mutation text
-        # AND injection text (banner + badge) for full coverage.
         def _build_verifier_payload(mj):
             items = []
             for m in mj.get("mutations", []):
@@ -421,44 +352,111 @@ if run_button and uploaded_file and target_url:
             items.append({"selector": "badge",  "new_text": inj_data.get("badge_text", "")})
             return {"mutations": items}
 
-        verifier_payload = _build_verifier_payload(mutations_json)
-
         verified = False
-        verification_attempts = 0
+        feedback = ""
+        reason = ""
+        
+        generation_placeholder = st.empty()
 
-        while not verified and verification_attempts < MAX_HALLUCINATION_RETRIES:
-            verification_attempts += 1
+        for attempt in range(5):
+            progress_msg = "✍️ Component 3 — Generating exact-target mutations…" if attempt == 0 else f"🔄 Regenerating mutations (retry {attempt})…"
+            progress.progress(45 + attempt * 5, text=progress_msg)
 
-            with st.spinner(f"Hallucination check — attempt {verification_attempts}/{MAX_HALLUCINATION_RETRIES}…"):
-                is_clean, reason = verify_hallucinations(ad_info["core_offer"], verifier_payload)
+            with st.spinner(f"Calling NVIDIA NIM Text model for CRO copywriting (Attempt {attempt + 1}/5)…"):
+                mutations_json = generate_mutations(ad_info, dom_data, feedback=feedback)
+
+            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            #  COMPONENT 4 — Hallucination Verification
+            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            progress.progress(65 + attempt * 5, text="🔬 Component 4 — Verifying for hallucinations…")
+            verifier_payload = _build_verifier_payload(mutations_json)
+
+            # Construct original text string to bypass original numerical claims
+            original_text = f"{dom_data['elements'].get('h1', {}).get('text', '')} " \
+                            f"{dom_data['elements'].get('p', {}).get('text', '')} " \
+                            f"{dom_data['elements'].get('a', {}).get('text', '')}"
+
+            with st.spinner(f"Hallucination check — attempt {attempt + 1}/5…"):
+                is_clean, reason = verify_hallucinations(
+                    ad_info["core_offer"], 
+                    verifier_payload, 
+                    original_text=original_text
+                )
 
             if is_clean:
                 verified = True
                 with status_area:
-                    st.success(
-                        f"✅ Component 4 — Hallucination Check Passed "
-                        f"(attempt {verification_attempts})"
-                    )
+                    st.success(f"✅ Component 4 — Hallucination Check Passed (attempt {attempt + 1})")
+                break
             else:
+                feedback = reason
                 with status_area:
-                    st.warning(
-                        f"⚠️ Hallucination detected (attempt {verification_attempts}): {reason}\n\n"
-                        f"Re-generating mutations…"
-                    )
-                # Retry: regenerate mutations
-                progress.progress(
-                    65 + verification_attempts * 5,
-                    text=f"🔄 Regenerating mutations (retry {verification_attempts})…"
-                )
-                with st.spinner("Re-calling NVIDIA NIM for cleaner output…"):
-                    mutations_json = generate_mutations(ad_info, dom_data)
-                    verifier_payload = _build_verifier_payload(mutations_json)
+                    st.warning(f"⚠️ Hallucination detected (attempt {attempt + 1}): {reason}\n\nRe-generating mutations…")
 
         if not verified:
             raise ValueError(
-                f"Hallucination verification failed after {MAX_HALLUCINATION_RETRIES} attempts.\n"
+                f"Hallucination verification failed after 5 attempts.\n"
                 f"Last issue: {reason}"
             )
+
+        if verified:
+            with status_area:
+                st.success("✅ Component 3 & 5 — Hybrid V3 Output Generated")
+
+                # ── Gradient colors from response ────────────
+                gen_colors = mutations_json.get("colors", {})
+                grad_primary = gen_colors.get("primary", ad_info.get("color_primary_hex", "#7B2FF7"))
+                grad_secondary = gen_colors.get("secondary", ad_info.get("color_secondary_hex", "#00D2FF"))
+
+                # ── Banner preview ───────────────────────────
+                inj = mutations_json.get("injections", {})
+                st.markdown(
+                    f'<div class="step-card">'
+                    f'<h4>🏷️ Banner Preview</h4>'
+                    f'<div style="background:linear-gradient(135deg, {grad_primary}, {grad_secondary});'
+                    f'color:white;text-align:center;font-weight:bold;padding:12px 16px;'
+                    f'border-radius:6px;margin-top:0.5rem;font-size:0.95rem;'
+                    f'letter-spacing:0.03em;">'
+                    f'{inj.get("banner_text", "—")}'
+                    f'</div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+
+                # ── Text mutation previews ───────────────────
+                selector_labels = {
+                    '[data-troopod-target="headline"]': ('H1 — Headline', 'h1'),
+                    '[data-troopod-target="subheadline"]': ('P — Subheadline', 'p'),
+                    '[data-troopod-target="cta"]': ('CTA — Button', 'a'),
+                }
+                for mut in mutations_json.get("mutations", []):
+                    sel = mut.get("selector", "?")
+                    label, elem_key = selector_labels.get(sel, (sel, ""))
+                    original = dom_data["elements"].get(elem_key, {}).get("text", "—")
+                    st.markdown(
+                        f'<div class="step-card">'
+                        f'<h4>{label} Mutation</h4>'
+                        f'<p><span style="color:#ef4444;text-decoration:line-through;">{original}</span></p>'
+                        f'<p class="text-cyan">→ {mut.get("new_text", "—")}</p>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
+
+                # ── Badge preview  (shimmer-style) ───────────
+                st.markdown(
+                    f'<div class="step-card">'
+                    f'<h4>✨ Shimmer Badge Preview</h4>'
+                    f'<p style="margin-top:0.5rem;">'
+                    f'<span style="background:linear-gradient(90deg, {grad_primary} 0%, {grad_secondary} 50%, {grad_primary} 100%);'
+                    f'background-size:200% auto;color:white;padding:0.25em 0.6em;border-radius:0.4em;'
+                    f'font-size:0.85rem;font-weight:700;display:inline-block;'
+                    f'box-shadow:0 4px 12px rgba(0,0,0,0.15);">'
+                    f'{inj.get("badge_text", "—")}'
+                    f'</span></p>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+
 
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         #  COMPONENT 6 — Edge Injection & Rendering
@@ -516,7 +514,7 @@ if run_button and uploaded_file and target_url:
 | Mutations | ✅ {len(mutations_json.get('mutations', []))} nodes via data‑troopod‑target |
 | Banner | 🎨 `{gen_inj.get('banner_text', '—')}` (gradient‑pan) |
 | Badge | ✨ `{gen_inj.get('badge_text', '—')}` (shimmer) |
-| Hallucination Check | ✅ Passed (attempt {verification_attempts}) |
+| Hallucination Check | ✅ Passed (attempt {attempt + 1}) |
 | Network Interceptor | ✅ fetch + XHR redirected |
 | Edge Injection | ✅ Shimmer + Gradient‑Pan + Safe Mutation |
 | Output Size | {len(modified_html):,} chars |

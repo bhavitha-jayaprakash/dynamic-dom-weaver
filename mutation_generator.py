@@ -76,6 +76,8 @@ You are a surgical copy-editor.
    Example: "Add to Cart" → "Add to Cart — Save 30%" ✅
    Example: "Add to Cart" → "Claim Your Discount Now" ❌
 
+3. If the original text contains a price or number (e.g., $50, 4130.00), you MUST retain that exact original number in your rewritten text.
+
 You will receive:
 - A CORE OFFER (e.g., "30% off annual plans")
 - A TAGLINE from the ad creative (e.g., "Scale Without Limits")
@@ -395,6 +397,7 @@ def _validate_hybrid_v3_schema(
 def generate_mutations(
     ad_info: Dict[str, str],
     dom_data: Dict[str, Any],
+    feedback: str = "",
 ) -> Dict[str, Any]:
     """
     Component 3 & 5 — Main entry point (Hybrid V3).
@@ -411,6 +414,7 @@ def generate_mutations(
                   "color_primary_hex", "color_secondary_hex" from C2.
         dom_data: The full dict returned by Component 1's
                   `extract_dom_data()`.
+        feedback: Optional error message from a previous failed hallucination check.
 
     Returns:
         dict — validated JSON with the Hybrid V3 schema.
@@ -422,6 +426,9 @@ def generate_mutations(
     client = _get_nim_client()
     elements = dom_data["elements"]
     user_prompt = _build_user_prompt(ad_info, elements)
+
+    if feedback:
+        user_prompt += f"\n\nPREVIOUS ATTEMPT FAILED. REASON: {feedback}. You MUST correct this. Do not calculate new prices. Only use the exact numbers provided in the core offer."
 
     fallback_primary = ad_info.get("color_primary_hex", "#7B2FF7")
     fallback_secondary = ad_info.get("color_secondary_hex", "#00D2FF")

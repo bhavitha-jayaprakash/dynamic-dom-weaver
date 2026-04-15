@@ -64,11 +64,39 @@ def _absolutify_urls(soup: BeautifulSoup, target_url: str) -> int:
     """
     count = 0
 
+    # ── Un-lazy SPAs ─────────────────────────────────────
+    for tag in soup.find_all(["img", "source"]):
+        if tag.get("loading") == "lazy":
+            del tag["loading"]
+
+        for attr in ["data-src", "data-srcset", "data-lazy-src"]:
+            val = tag.get(attr)
+            if val:
+                if attr == "data-srcset":
+                    new_entries = []
+                    for entry in val.split(","):
+                        entry = entry.strip()
+                        if not entry: continue
+                        parts = entry.split()
+                        url_part = parts[0]
+                        descriptor = " ".join(parts[1:]) if len(parts) > 1 else ""
+                        if not url_part.startswith(("http://", "https://", "data:")):
+                            url_part = urljoin(target_url, url_part)
+                        new_entries.append(f"{url_part} {descriptor}".strip())
+                    tag["srcset"] = ", ".join(new_entries)
+                else:
+                    if not val.startswith(("http://", "https://", "data:")):
+                        val = urljoin(target_url, val)
+                    tag["src"] = val
+                count += 1
+
+
     # ── Standard single-value attributes ─────────────────
     tag_attr_map = [
         ("a",      "href"),
         ("link",   "href"),
         ("img",    "src"),
+        ("img",    "data-src"),
         ("script", "src"),
         ("form",   "action"),
         ("source", "src"),
@@ -92,29 +120,30 @@ def _absolutify_urls(soup: BeautifulSoup, target_url: str) -> int:
     # ── srcset attributes (source, img) ──────────────────
     # srcset has the format: "url1 1x, url2 2x" or "url1 300w, url2 600w"
     for tag in soup.find_all(["source", "img"]):
-        srcset = tag.get("srcset")
-        if not srcset:
-            continue
-
-        new_entries = []
-        modified = False
-        for entry in srcset.split(","):
-            entry = entry.strip()
-            if not entry:
+        for attr_name in ["srcset", "data-srcset"]:
+            srcset = tag.get(attr_name)
+            if not srcset:
                 continue
-            parts = entry.split()
-            url_part = parts[0]
-            descriptor = " ".join(parts[1:]) if len(parts) > 1 else ""
 
-            if not url_part.startswith(("http://", "https://", "data:")):
-                url_part = urljoin(target_url, url_part)
-                modified = True
+            new_entries = []
+            modified = False
+            for entry in srcset.split(","):
+                entry = entry.strip()
+                if not entry:
+                    continue
+                parts = entry.split()
+                url_part = parts[0]
+                descriptor = " ".join(parts[1:]) if len(parts) > 1 else ""
 
-            new_entries.append(f"{url_part} {descriptor}".strip())
+                if not url_part.startswith(("http://", "https://", "data:")):
+                    url_part = urljoin(target_url, url_part)
+                    modified = True
 
-        if modified:
-            tag["srcset"] = ", ".join(new_entries)
-            count += 1
+                new_entries.append(f"{url_part} {descriptor}".strip())
+
+            if modified:
+                tag[attr_name] = ", ".join(new_entries)
+                count += 1
 
     return count
 
@@ -300,13 +329,33 @@ def _build_hybrid_v4_script(verified_json: Dict[str, Any]) -> str:
         }}
         if (!headline) return;
 
+        // 1. Read Computed Alignment
+        var targetAlign = window.getComputedStyle(headline).textAlign;
+
         var badge = document.createElement('span');
         badge.id = 'troopod-badge';
         badge.className = 'troopod-badge';
         badge.innerText = BADGE_TEXT;
 
-        headline.insertAdjacentElement('afterend', badge);
-        console.log('[DOM Weaver V4] Shimmer badge injected after headline:', BADGE_TEXT);
+        // 2. Create a Flexbox Wrapper
+        var wrapper = document.createElement('div');
+        wrapper.style.display = 'flex';
+        wrapper.style.width = '100%';
+        wrapper.style.marginBottom = '10px';
+
+        // 3. Dynamically Set Justification
+        if (targetAlign === 'center') {{
+            wrapper.style.justifyContent = 'center';
+        }} else if (targetAlign === 'right') {{
+            wrapper.style.justifyContent = 'flex-end';
+        }} else {{
+            wrapper.style.justifyContent = 'flex-start';
+        }}
+
+        // 4. Append
+        wrapper.appendChild(badge);
+        headline.insertAdjacentElement('afterend', wrapper);
+        console.log('[DOM Weaver V4] Context-aware shimmer badge injected after headline:', BADGE_TEXT);
     }}
 
     // ═══════════════════════════════════════════════════
@@ -323,6 +372,7 @@ def _build_hybrid_v4_script(verified_json: Dict[str, Any]) -> str:
      * This preserves icons, spans, and event listeners.
      */
     function replaceTextSafely(element, newText) {{
+        var originalColor = window.getComputedStyle(element).color;
         var textNodes = [];
         for (var i = 0; i < element.childNodes.length; i++) {{
             var node = element.childNodes[i];
@@ -341,26 +391,29 @@ def _build_hybrid_v4_script(verified_json: Dict[str, Any]) -> str:
             return true;
         }}
 
+        var coloredSpan = '<span style="color: ' + originalColor + ' !important;">' + newText + '</span>';
+
         // Fallback: no direct text nodes found — try first-level children
         // that are inline elements (span, strong, em, b, i)
         var inlineTags = ['SPAN', 'STRONG', 'EM', 'B', 'I'];
         for (var j = 0; j < element.children.length; j++) {{
             var child = element.children[j];
             if (inlineTags.indexOf(child.tagName) !== -1 && child.textContent.trim()) {{
-                child.textContent = newText;
+                child.innerHTML = coloredSpan;
                 return true;
             }}
         }}
 
         // Last resort — only if element has no complex children
         if (element.children.length === 0) {{
-            element.textContent = newText;
+            element.innerHTML = coloredSpan;
             return true;
         }}
 
-        // Truly complex element — prepend a text node
-        var tn = document.createTextNode(newText);
-        element.insertBefore(tn, element.firstChild);
+        // Truly complex element — prepend a text node (but use our span)
+        var tempDiv = document.createElement('div');
+        tempDiv.innerHTML = coloredSpan;
+        element.insertBefore(tempDiv.firstChild, element.firstChild);
         return true;
     }}
 
