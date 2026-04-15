@@ -329,13 +329,33 @@ def _build_hybrid_v4_script(verified_json: Dict[str, Any]) -> str:
         }}
         if (!headline) return;
 
+        // 1. Read Computed Alignment
+        var targetAlign = window.getComputedStyle(headline).textAlign;
+
         var badge = document.createElement('span');
         badge.id = 'troopod-badge';
         badge.className = 'troopod-badge';
         badge.innerText = BADGE_TEXT;
 
-        headline.insertAdjacentElement('afterend', badge);
-        console.log('[DOM Weaver V4] Shimmer badge injected after headline:', BADGE_TEXT);
+        // 2. Create a Flexbox Wrapper
+        var wrapper = document.createElement('div');
+        wrapper.style.display = 'flex';
+        wrapper.style.width = '100%';
+        wrapper.style.marginBottom = '10px';
+
+        // 3. Dynamically Set Justification
+        if (targetAlign === 'center') {{
+            wrapper.style.justifyContent = 'center';
+        }} else if (targetAlign === 'right') {{
+            wrapper.style.justifyContent = 'flex-end';
+        }} else {{
+            wrapper.style.justifyContent = 'flex-start';
+        }}
+
+        // 4. Append
+        wrapper.appendChild(badge);
+        headline.insertAdjacentElement('afterend', wrapper);
+        console.log('[DOM Weaver V4] Context-aware shimmer badge injected after headline:', BADGE_TEXT);
     }}
 
     // ═══════════════════════════════════════════════════
