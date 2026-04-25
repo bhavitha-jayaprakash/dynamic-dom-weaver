@@ -148,4 +148,4 @@ Modern SPAs fail due to iframe URL issues.
 
 ## Architectural Diagram
 
-[Architectural Diagram](./architecture.svg)
+![Architectural Diagram](architecture.svg)
