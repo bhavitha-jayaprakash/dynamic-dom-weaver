@@ -48,7 +48,7 @@ The system operates on a deterministic, linear, 6-component pipeline to ensure s
 
 ### Component 1: The Ingestion & DOM Extractor
 
-- **Function:** Fetches raw HTML and uses heuristic DOM parsing to identify the main Headline (<h1>/hero), Subtext (<p>), and CTA (<button>, <a>).  
+- **Function:** Fetches raw HTML and uses heuristic DOM parsing to identify the main Headline, Subtext, and CTA.  
 
 - **PM Highlight (Heuristics & Fallbacks):**  
 To prevent modifying the wrong elements, C1 utilizes "Negative Exclusion Rules" to ignore navigational menus, footers, and utility widgets. It stamps identified nodes with `data-troopod-target` attributes, ensuring deterministic downstream targeting rather than relying on brittle CSS classes. It also employs the Jina Reader API as a fallback if parsing fails.
